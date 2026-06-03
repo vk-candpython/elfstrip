@@ -57,12 +57,12 @@ chmod +x elfstrip
 
 ## Overview
 
-**elfstrip** — is an aggressive ELF binary stripper that removes **all non‑critical metadata** from Linux executables and shared objects. Unlike standard `strip` or even `sstrip`, it **zeroes out** section headers, compacts program headers, sanitizes dynamic tables, and produces a minimal *ghost* ELF that executes correctly but appears empty to standard analysis tools (`readelf`, `objdump`, `gdb`). The resulting binary is typically **~20 KB** in size.
+**elfstrip** — is an aggressive ELF binary stripper that removes **all non‑critical metadata** from Linux executables and shared objects. Unlike standard `strip` or even `sstrip`, it **zeroes out** section headers, compacts program headers, sanitizes dynamic tables, and produces a minimal *ghost* ELF that executes correctly but appears empty to standard analysis tools (`readelf`, `objdump`, `gdb`). The resulting binary is typically **~16 KB** in size.
 
 - Preserves only essential segments (`LOAD`, `DYNAMIC`, `INTERP`, `PHDR`, `GNU_*`).
 - **Compacts** program headers and updates `PT_PHDR` (both size **and** offset → `e_phoff`).
 - **Zeros** section header table and all ELF header fields that are not mandatory for execution.
-- **Sanitizes** `PT_INTERP` (truncates trailing garbage) and `PT_DYNAMIC` (removes `DT_DEBUG` and zero‑value entries, preserves `DT_TEXTREL`/`DT_BIND_NOW`).
+- **Sanitizes** `PT_INTERP` (truncates trailing garbage) and `PT_DYNAMIC` (removes `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH` and zero‑value entries, preserves `DT_TEXTREL`/`DT_BIND_NOW`).
 - **Wipes** all gaps between preserved regions with zeroes and truncates the file.
 
 The result: an ELF with **all necessary program headers intact** but **no section headers** – a “sectionless” binary that runs exactly like the original.
@@ -73,7 +73,7 @@ The result: an ELF with **all necessary program headers intact** but **no sectio
 |---------|-------------|
 | 🗜️ **Program Header Compaction** | Removes non‑critical segments, packs surviving headers to the front |
 | 🔄 **PT_PHDR Synchronization** | Updates `p_filesz`, `p_memsz` **and** sets `p_offset = e_phoff` (correct file offset) |
-| 🧹 **Dynamic Table Sanitization** | Filters `PT_DYNAMIC`: drops `DT_DEBUG`, zero‑value entries (preserves `DT_TEXTREL`, `DT_BIND_NOW`, `DT_NULL`) |
+| 🧹 **Dynamic Table Sanitization** | Filters `PT_DYNAMIC`: drops `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH`, zero‑value entries (preserves `DT_TEXTREL`, `DT_BIND_NOW`, `DT_NULL`) |
 | 📉 **Section Header Removal** | Zeroes `e_shoff`, `e_shnum`, `e_shentsize`, `e_shstrndx` – makes ELF “sectionless” |
 | 🕳️ **Gap Wiping** | Fills all unmapped areas between critical segments with zeroes |
 | 📏 **Physical Truncation** | Shrinks the file to the last byte of the last preserved segment |
@@ -148,7 +148,7 @@ The binary executes exactly as before, but all section headers are gone.
 | `file is small for striping ELF` | Input file < 1 KB; refuse to process. |
 | `invalid ELF file` | File does not conform to ELF format (e.g., wrong `e_phentsize`). |
 | `unsupported ELF type` | Only `ET_EXEC` and `ET_DYN` are supported. `ET_REL` (object files) are not. |
-| `ftruncate` errors | Cannot write changes; check disk space/permissions. |
+| `msync` / `ftruncate` / `fsync` errors | Cannot write changes; check disk space/permissions. |
 | Binary crashes after stripping | Original relied on non‑standard segments; modify `is_crit_seg()` to preserve more types. |
 
 ---
@@ -157,7 +157,7 @@ The binary executes exactly as before, but all section headers are gone.
 
 ## Обзор
 
-**elfstrip** — это агрессивный стриппер ELF-бинарников, который удаляет **все некритичные метаданные** из исполняемых файлов и разделяемых библиотек Linux. В отличие от стандартного `strip` или даже `sstrip`, он **зануляет** заголовки секций, уплотняет заголовки программ, санирует динамические таблицы и создаёт минимальный «призрачный» ELF, который корректно выполняется, но выглядит пустым для стандартных анализаторов (`readelf`, `objdump`, `gdb`). Итоговый бинарник весит **около 20 КБ**.
+**elfstrip** — это агрессивный стриппер ELF-бинарников, который удаляет **все некритичные метаданные** из исполняемых файлов и разделяемых библиотек Linux. В отличие от стандартного `strip` или даже `sstrip`, он **зануляет** заголовки секций, уплотняет заголовки программ, санирует динамические таблицы и создаёт минимальный «призрачный» ELF, который корректно выполняется, но выглядит пустым для стандартных анализаторов (`readelf`, `objdump`, `gdb`). Итоговый бинарник весит **около 16 КБ**.
 
 ## Возможности
 
@@ -165,7 +165,7 @@ The binary executes exactly as before, but all section headers are gone.
 |---------|----------|
 | 🗜️ **Уплотнение заголовков программ** | Удаляет некритичные сегменты, упаковывает оставшиеся в начало |
 | 🔄 **Синхронизация PT_PHDR** | Обновляет `p_filesz`, `p_memsz` **и** устанавливает `p_offset = e_phoff` (правильное смещение) |
-| 🧹 **Очистка динамической таблицы** | Удаляет `DT_DEBUG` и записи с нулевыми значениями (сохраняет `DT_TEXTREL`, `DT_BIND_NOW`, `DT_NULL`) |
+| 🧹 **Очистка динамической таблицы** | Удаляет `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH` и записи с нулевыми значениями (сохраняет `DT_TEXTREL`, `DT_BIND_NOW`, `DT_NULL`) |
 | 📉 **Удаление заголовков секций** | Обнуляет `e_shoff`, `e_shnum`, `e_shentsize`, `e_shstrndx` — ELF становится «бессекционным» |
 | 🕳️ **Затирка промежутков** | Заполняет нулями все области между критическими сегментами |
 | 📏 **Физическое урезание** | Уменьшает файл до последнего байта последнего сохранённого сегмента |
@@ -240,7 +240,7 @@ $ readelf -l main      # заголовки программ остались н
 | `file is small for striping ELF` | Входной файл < 1 КБ; обработка отклонена. |
 | `invalid ELF file` | Файл не соответствует формату ELF (например, неверный `e_phentsize`). |
 | `unsupported ELF type` | Поддерживаются только `ET_EXEC` и `ET_DYN`. `ET_REL` (объектные файлы) не поддерживаются. |
-| Ошибки `ftruncate` | Не удалось записать изменения; проверьте место на диске и права доступа. |
+| Ошибки `msync` / `ftruncate` / `fsync` | Не удалось записать изменения; проверьте место на диске и права доступа. |
 | Бинарник падает после обработки | Исходный файл использовал нестандартные сегменты; измените `is_crit_seg()` для сохранения дополнительных типов. |
 
 ---
