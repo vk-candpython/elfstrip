@@ -7,7 +7,7 @@
 [![Language](https://img.shields.io/badge/language-C-00599C?logo=c)](https://en.wikipedia.org/wiki/C_(programming_language))
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-*Extreme ELF metadata stripper — Remove section headers, keep execution*
+*Extreme ELF metadata stripper — Remove everything non‑essential, keep execution*
 
 </div>
 
@@ -57,26 +57,34 @@ chmod +x elfstrip
 
 ## Overview
 
-**elfstrip** — is an aggressive ELF binary stripper that removes **all non‑critical metadata** from Linux executables and shared objects. Unlike standard `strip` or even `sstrip`, it **zeroes out** section headers, compacts program headers, sanitizes dynamic tables, and produces a minimal *ghost* ELF that executes correctly but appears empty to standard analysis tools (`readelf`, `objdump`, `gdb`). The resulting binary is typically **~16 KB** in size.
+**elfstrip** — is an aggressive ELF binary stripper that removes **all non‑critical metadata** from Linux executables and shared objects. It goes far beyond standard `strip` or `sstrip`:
 
-- Preserves only essential segments (`LOAD`, `DYNAMIC`, `INTERP`, `PHDR`, `GNU_*`).
-- **Compacts** program headers and updates `PT_PHDR` (both size **and** offset → `e_phoff`).
-- **Zeros** section header table and all ELF header fields that are not mandatory for execution.
-- **Sanitizes** `PT_INTERP` (truncates trailing garbage) and `PT_DYNAMIC` (removes `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH` and zero‑value entries, preserves `DT_TEXTREL`/`DT_BIND_NOW`).
-- **Wipes** all gaps between preserved regions with zeroes and truncates the file.
+- **Zeroes out** section headers, making the file appear empty to `readelf -S`.
+- **Compacts** program headers – non‑essential segments like `PT_NOTE` are removed, and the remaining headers are packed to the front.
+- **Intelligently sanitizes** the dynamic table: removes `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH`, `DT_SONAME` (for executables), unnecessary flags, and zero‑value entries.
+- **Preserves** everything that is truly required for execution: `PT_LOAD` (with BSS), `PT_DYNAMIC`, `PT_INTERP`, `PT_PHDR`, `PT_TLS`, `PT_GNU_RELRO`, `PT_GNU_STACK` (non‑empty), `PT_GNU_PROPERTY`, and `PT_ARM_EXIDX`.
+- **Detects C++ exceptions** by scanning for `_Unwind_Resume` inside `PT_LOAD` segments – if none is found, `.eh_frame` and `.gcc_except_table` are completely wiped.
+- **Handles Intel CET/IBT/SHSTK safely** – `PT_GNU_PROPERTY` is never touched, even when overlapping `PT_NOTE` segments are removed.
+- **Trims trailing zeros** from the end of every `PT_LOAD` segment, physically shrinking the file while preserving the full virtual memory size.
+- **Wipes all gaps** between protected regions with zeros and truncates the file.
+- **Outputs clear statistics**: old size, new size, and percentage reduction with one decimal.
 
-The result: an ELF with **all necessary program headers intact** but **no section headers** – a “sectionless” binary that runs exactly like the original.
+The result: a **sectionless** ELF that runs exactly like the original but can be **10‑30 % smaller** (or even more for programs without C++ exceptions).
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
 | 🗜️ **Program Header Compaction** | Removes non‑critical segments, packs surviving headers to the front |
+| 🧠 **BSS‑aware LOAD handling** | If `p_memsz > p_filesz`, keeps original memory size → `.bss` preserved |
 | 🔄 **PT_PHDR Synchronization** | Updates `p_filesz`, `p_memsz` **and** sets `p_offset = e_phoff` (correct file offset) |
-| 🧹 **Dynamic Table Sanitization** | Filters `PT_DYNAMIC`: drops `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH`, zero‑value entries (preserves `DT_TEXTREL`, `DT_BIND_NOW`, `DT_NULL`) |
+| 🧹 **Dynamic Table Sanitization** | Filters `PT_DYNAMIC`: drops `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH`, `DT_SONAME` for executables, zero‑value entries; strips irrelevant bits from `DT_FLAGS`/`DT_FLAGS_1` |
+| 🧬 **Smart EH‑Frame Removal** | Detects C++ exceptions via `_Unwind_Resume` scan inside `PT_LOAD`; removes `.eh_frame` and `PT_ARM_EXIDX` only when no exceptions are used |
 | 📉 **Section Header Removal** | Zeroes `e_shoff`, `e_shnum`, `e_shentsize`, `e_shstrndx` – makes ELF “sectionless” |
-| 🕳️ **Gap Wiping** | Fills all unmapped areas between critical segments with zeroes |
-| 📏 **Physical Truncation** | Shrinks the file to the last byte of the last preserved segment |
+| 🛡️ **Safe NOTE Wiping** | Removes `PT_NOTE` while keeping overlapping `PT_GNU_PROPERTY` intact (Intel CET/IBT/SHSTK) |
+| 📏 **Trailing Zero Truncation** | Cuts physical zeros at the end of every `PT_LOAD` segment, reducing file size |
+| 🕳️ **Gap Wiping** | Fills all unmapped areas between critical segments with zeros |
+| 📊 **Statistics** | Prints old → new size in bytes and percentage reduction |
 | 🏛️ **Architecture‑Agnostic** | Full support for x86 (32/64), ARM/AArch64, RISC‑V (via `PT_RISCV_ATTRIBUTES` if defined) |
 | 🔧 **In‑Place Modification** | Modifies target file directly (backup recommended) |
 | ⚡ **No Dependencies** | Single C file, compiles with any standard C compiler |
@@ -122,6 +130,10 @@ $ readelf -S main | wc -l
 
 ```text
 $ ./elfstrip main
+[+] Stripped: 8520 -> 6704 bytes (-21.3%)
+```
+
+```text
 $ readelf -h main | grep "Number of section headers"
 Number of section headers:         0
 $ readelf -S main
@@ -145,7 +157,7 @@ The binary executes exactly as before, but all section headers are gone.
 
 | Issue | Solution |
 |-------|----------|
-| `file is small for striping ELF` | Input file < 1 KB; refuse to process. |
+| `file size is below minimum ELF threshold` | Input file < 1 KB; refuse to process. |
 | `invalid ELF file` | File does not conform to ELF format (e.g., wrong `e_phentsize`). |
 | `unsupported ELF type` | Only `ET_EXEC` and `ET_DYN` are supported. `ET_REL` (object files) are not. |
 | `msync` / `ftruncate` / `fsync` errors | Cannot write changes; check disk space/permissions. |
@@ -157,18 +169,34 @@ The binary executes exactly as before, but all section headers are gone.
 
 ## Обзор
 
-**elfstrip** — это агрессивный стриппер ELF-бинарников, который удаляет **все некритичные метаданные** из исполняемых файлов и разделяемых библиотек Linux. В отличие от стандартного `strip` или даже `sstrip`, он **зануляет** заголовки секций, уплотняет заголовки программ, санирует динамические таблицы и создаёт минимальный «призрачный» ELF, который корректно выполняется, но выглядит пустым для стандартных анализаторов (`readelf`, `objdump`, `gdb`). Итоговый бинарник весит **около 16 КБ**.
+**elfstrip** — это агрессивный стриппер ELF-бинарников, который удаляет **все некритичные метаданные** из исполняемых файлов и разделяемых библиотек Linux. Он идёт гораздо дальше стандартного `strip` или `sstrip`:
+
+- **Зануляет** заголовки секций, делая файл пустым для `readelf -S`.
+- **Уплотняет** программные заголовки – некритичные сегменты вроде `PT_NOTE` удаляются, а оставшиеся упаковываются в начало.
+- **Интеллектуально очищает** динамическую таблицу: удаляет `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH`, `DT_SONAME` (для исполняемых файлов), ненужные флаги и записи с нулевыми значениями.
+- **Сохраняет** всё, что действительно необходимо для выполнения: `PT_LOAD` (с BSS), `PT_DYNAMIC`, `PT_INTERP`, `PT_PHDR`, `PT_TLS`, `PT_GNU_RELRO`, `PT_GNU_STACK` (непустой), `PT_GNU_PROPERTY` и `PT_ARM_EXIDX`.
+- **Определяет наличие C++ исключений**, сканируя `_Unwind_Resume` внутри `PT_LOAD` – если сигнатура не найдена, `.eh_frame` и `.gcc_except_table` полностью удаляются.
+- **Безопасно работает с Intel CET/IBT/SHSTK** – `PT_GNU_PROPERTY` никогда не трогается, даже при удалении перекрывающихся `PT_NOTE`.
+- **Обрезает хвостовые нули** в конце каждого `PT_LOAD` сегмента, физически уменьшая файл при сохранении полного виртуального размера.
+- **Затирает все промежутки** между защищёнными регионами нулями и обрезает файл.
+- **Выводит понятную статистику**: старый размер, новый размер и процент уменьшения с одной десятой.
+
+Результат: **бессекционный** ELF, который работает точно так же, как оригинал, но может быть на **10–30 % меньше** (а для программ без C++ исключений – ещё сильнее).
 
 ## Возможности
 
 | Функция | Описание |
 |---------|----------|
 | 🗜️ **Уплотнение заголовков программ** | Удаляет некритичные сегменты, упаковывает оставшиеся в начало |
+| 🧠 **Сохранение BSS у PT_LOAD** | Если `p_memsz > p_filesz`, оставляет исходный размер памяти – `.bss` не теряется |
 | 🔄 **Синхронизация PT_PHDR** | Обновляет `p_filesz`, `p_memsz` **и** устанавливает `p_offset = e_phoff` (правильное смещение) |
-| 🧹 **Очистка динамической таблицы** | Удаляет `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH` и записи с нулевыми значениями (сохраняет `DT_TEXTREL`, `DT_BIND_NOW`, `DT_NULL`) |
-| 📉 **Удаление заголовков секций** | Обнуляет `e_shoff`, `e_shnum`, `e_shentsize`, `e_shstrndx` — ELF становится «бессекционным» |
-| 🕳️ **Затирка промежутков** | Заполняет нулями все области между критическими сегментами |
-| 📏 **Физическое урезание** | Уменьшает файл до последнего байта последнего сохранённого сегмента |
+| 🧹 **Очистка динамической таблицы** | Удаляет `DT_DEBUG`, `DT_RPATH`, `DT_RUNPATH`, `DT_SONAME` у исполняемых файлов, записи с нулевыми значениями; обрезает лишние флаги в `DT_FLAGS`/`DT_FLAGS_1` |
+| 🧬 **Умное удаление EH‑фреймов** | Определяет наличие исключений C++ по сигнатуре `_Unwind_Resume` внутри `PT_LOAD`; удаляет `.eh_frame` и `PT_ARM_EXIDX` только при отсутствии исключений |
+| 📉 **Удаление заголовков секций** | Обнуляет `e_shoff`, `e_shnum`, `e_shentsize`, `e_shstrndx` – ELF становится «бессекционным» |
+| 🛡️ **Безопасное удаление NOTE** | Удаляет `PT_NOTE`, сохраняя перекрывающийся `PT_GNU_PROPERTY` нетронутым (Intel CET/IBT/SHSTK) |
+| 📏 **Обрезка хвостовых нулей** | Отрезает физические нули в конце каждого `PT_LOAD` сегмента, уменьшая размер файла |
+| 🕳️ **Затирка промежутков** | Заполняет нулями все несоприкасающиеся области между критическими сегментами |
+| 📊 **Статистика** | Выводит старый и новый размер в байтах и процент уменьшения |
 | 🏛️ **Независимость от архитектуры** | Полная поддержка x86 (32/64), ARM/AArch64, RISC‑V (через `PT_RISCV_ATTRIBUTES` если определён) |
 | 🔧 **Изменение на месте** | Изменяет файл напрямую (рекомендуется бэкап) |
 | ⚡ **Нет зависимостей** | Один C-файл, компилируется любым компилятором C |
@@ -214,6 +242,10 @@ $ readelf -S main | wc -l
 
 ```text
 $ ./elfstrip main
+[+] Stripped: 8520 -> 6704 bytes (-21.3%)
+```
+
+```text
 $ readelf -h main | grep "Number of section headers"
 Number of section headers:         0
 $ readelf -S main
@@ -237,7 +269,7 @@ $ readelf -l main      # заголовки программ остались н
 
 | Проблема | Решение |
 |----------|---------|
-| `file is small for striping ELF` | Входной файл < 1 КБ; обработка отклонена. |
+| `file size is below minimum ELF threshold` | Входной файл < 1 КБ; обработка отклонена. |
 | `invalid ELF file` | Файл не соответствует формату ELF (например, неверный `e_phentsize`). |
 | `unsupported ELF type` | Поддерживаются только `ET_EXEC` и `ET_DYN`. `ET_REL` (объектные файлы) не поддерживаются. |
 | Ошибки `msync` / `ftruncate` / `fsync` | Не удалось записать изменения; проверьте место на диске и права доступа. |
