@@ -22,7 +22,7 @@
 **Precompiled binary (Linux x86_64) is available in the release:**  
 **Готовый бинарник (Linux x86_64) в релизе:**
 
-👉 **[Download / Скачать elfstrip v2.0.0](https://github.com/vk-candpython/elfstrip/releases/tag/v2.0.0)** 👈
+👉 **[Download / Скачать elfstrip v1.0.0](https://github.com/vk-candpython/elfstrip/releases/tag/v1.0.0)** 👈
 
 Go to **Assets** → click `elfstrip` → make executable:  
 Перейдите в **Assets** → нажмите `elfstrip` → сделайте исполняемым:
@@ -100,8 +100,8 @@ The result: a **sectionless** ELF that runs exactly like the original but can be
 ### Download precompiled binary (from release)
 
 ```bash
-# Download from https://github.com/vk-candpython/elfstrip/releases/tag/v2.0.0
-wget https://github.com/vk-candpython/elfstrip/releases/download/v2.0.0/elfstrip
+# Download from https://github.com/vk-candpython/elfstrip/releases/tag/v1.0.0
+wget https://github.com/vk-candpython/elfstrip/releases/download/v1.0.0/elfstrip
 chmod +x elfstrip
 ```
 
@@ -218,8 +218,8 @@ The binary executes exactly as before, but all section headers are gone.
 ### Скачать готовый бинарник (из релиза)
 
 ```bash
-# Скачать с https://github.com/vk-candpython/elfstrip/releases/tag/v2.0.0
-wget https://github.com/vk-candpython/elfstrip/releases/download/v2.0.0/elfstrip
+# Скачать с https://github.com/vk-candpython/elfstrip/releases/tag/v1.0.0
+wget https://github.com/vk-candpython/elfstrip/releases/download/v1.0.0/elfstrip
 chmod +x elfstrip
 ```
 
