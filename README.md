@@ -9,6 +9,8 @@
 
 *Extreme ELF metadata stripper — Remove everything non‑essential, keep execution*
 
+### 📺 [Watch demo on YouTube](https://www.youtube.com/watch?v=L0X0XmO60Go)
+
 </div>
 
 > **⚠️ WARNING**  
